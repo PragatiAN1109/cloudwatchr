@@ -1,0 +1,50 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway-service
+  cloud:
+    gateway:
+      routes:
+        - id: metrics-service
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/metrics/**
+          filters:
+            - StripPrefix=0
+
+        - id: analytics-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/analytics/**
+          filters:
+            - StripPrefix=0
+
+        - id: alerts-service
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/alerts/**
+          filters:
+            - StripPrefix=0
+
+        - id: ai-service
+          uri: http://localhost:8084
+          predicates:
+            - Path=/api/ai/**
+          filters:
+            - StripPrefix=0
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    reactor.netty: INFO
