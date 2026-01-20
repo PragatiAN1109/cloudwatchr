@@ -1,6 +1,7 @@
 package com.cloudwatchr.metrics.service;
 
 import com.cloudwatchr.metrics.dto.MetricRequest;
+import com.cloudwatchr.metrics.dto.MetricsEventDto;
 import com.cloudwatchr.metrics.model.Metric;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,14 +56,67 @@ public class MetricsService {
     private final AtomicLong totalIngested = new AtomicLong(0);
     
     /**
-     * Ingests a single metric from an API request.
+     * Ingests a single metric event from the validated DTO.
+     * 
+     * <p>This method accepts a validated {@link MetricsEventDto} and converts it
+     * to the domain model for storage. Validation is performed by Spring before
+     * this method is called via {@code @Valid} annotation.</p>
+     * 
+     * @param eventDto The validated metric event DTO
+     * @return The stored metric with generated ID
+     */
+    public Metric ingestMetricEvent(MetricsEventDto eventDto) {
+        logger.debug("Ingesting metric event: {}", eventDto);
+        
+        // Convert DTO to domain model
+        Metric metric = convertEventDtoToMetric(eventDto);
+        
+        // Store the metric
+        long id = idCounter.incrementAndGet();
+        metricsStore.put(id, metric);
+        totalIngested.incrementAndGet();
+        
+        logger.info("Metric event ingested successfully - Service: {}, Endpoint: {}, Status: {}, Latency: {}ms",
+                   metric.getServiceName(), metric.getEndpoint(), 
+                   metric.getStatusCode(), metric.getLatencyMs());
+        
+        return metric;
+    }
+    
+    /**
+     * Ingests multiple metric events in a batch operation.
+     * 
+     * <p>Each event in the batch is already validated by Spring via {@code @Valid}
+     * annotation before this method is called.</p>
+     * 
+     * @param eventDtos List of validated metric event DTOs
+     * @return List of ingested metrics
+     */
+    public List<Metric> ingestMetricEventsBatch(List<MetricsEventDto> eventDtos) {
+        logger.info("Ingesting batch of {} metric events", eventDtos.size());
+        
+        List<Metric> ingestedMetrics = new ArrayList<>();
+        
+        for (MetricsEventDto eventDto : eventDtos) {
+            Metric metric = ingestMetricEvent(eventDto);
+            ingestedMetrics.add(metric);
+        }
+        
+        logger.info("Batch ingestion complete - {} metric events processed", ingestedMetrics.size());
+        return ingestedMetrics;
+    }
+    
+    /**
+     * Ingests a single metric from an API request (legacy method).
      * 
      * <p>Validates the request, converts it to a domain model, and stores it.</p>
      * 
      * @param request The metric request to ingest
      * @return The stored metric with generated ID
      * @throws IllegalArgumentException if the request is invalid
+     * @deprecated Use {@link #ingestMetricEvent(MetricsEventDto)} with validated DTO instead
      */
+    @Deprecated
     public Metric ingestMetric(MetricRequest request) {
         logger.debug("Ingesting metric: {}", request);
         
@@ -74,7 +128,7 @@ public class MetricsService {
         }
         
         // Convert DTO to domain model
-        Metric metric = convertToMetric(request);
+        Metric metric = convertRequestToMetric(request);
         
         // Store the metric
         long id = idCounter.incrementAndGet();
@@ -89,12 +143,14 @@ public class MetricsService {
     }
     
     /**
-     * Ingests multiple metrics in a batch operation.
+     * Ingests multiple metrics in a batch operation (legacy method).
      * 
      * @param requests List of metric requests to ingest
      * @return List of ingested metrics
      * @throws IllegalArgumentException if any request is invalid
+     * @deprecated Use {@link #ingestMetricEventsBatch(List)} with validated DTOs instead
      */
+    @Deprecated
     public List<Metric> ingestMetricsBatch(List<MetricRequest> requests) {
         logger.info("Ingesting batch of {} metrics", requests.size());
         
@@ -158,12 +214,33 @@ public class MetricsService {
     }
     
     /**
-     * Converts a MetricRequest DTO to a Metric domain model.
+     * Converts a MetricsEventDto to a Metric domain model.
+     * 
+     * @param eventDto The validated event DTO to convert
+     * @return The domain model
+     */
+    private Metric convertEventDtoToMetric(MetricsEventDto eventDto) {
+        return new Metric(
+            eventDto.getServiceName(),
+            eventDto.getEndpoint(),
+            eventDto.getTimestamp(),
+            eventDto.getLatencyMs(),
+            eventDto.getStatusCode(),
+            eventDto.getRequestId(),
+            eventDto.getRegion(),
+            eventDto.getMethod()
+        );
+    }
+    
+    /**
+     * Converts a MetricRequest DTO to a Metric domain model (legacy).
      * 
      * @param request The request to convert
      * @return The domain model
+     * @deprecated Use {@link #convertEventDtoToMetric(MetricsEventDto)} instead
      */
-    private Metric convertToMetric(MetricRequest request) {
+    @Deprecated
+    private Metric convertRequestToMetric(MetricRequest request) {
         return new Metric(
             request.getServiceName(),
             request.getEndpoint(),
