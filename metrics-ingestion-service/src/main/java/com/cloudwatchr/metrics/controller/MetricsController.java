@@ -1,17 +1,21 @@
 package com.cloudwatchr.metrics.controller;
 
-import com.cloudwatchr.metrics.dto.MetricRequest;
+import com.cloudwatchr.metrics.dto.MetricsEventDto;
 import com.cloudwatchr.metrics.model.Metric;
 import com.cloudwatchr.metrics.service.MetricsService;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * REST controller for metrics ingestion endpoints.
@@ -19,10 +23,14 @@ import java.util.Map;
  * <p>This controller provides HTTP endpoints for submitting and retrieving metrics.
  * All endpoints are prefixed with {@code /api/metrics}.</p>
  * 
+ * <h2>Validation:</h2>
+ * <p>All POST endpoints use {@code @Valid} annotation to automatically validate
+ * incoming {@link MetricsEventDto} objects using JSR-303 validation annotations.</p>
+ * 
  * <h2>Available Endpoints:</h2>
  * <ul>
- *   <li>POST /api/metrics - Submit a single metric</li>
- *   <li>POST /api/metrics/batch - Submit multiple metrics</li>
+ *   <li>POST /api/metrics - Submit a single metric (with validation)</li>
+ *   <li>POST /api/metrics/batch - Submit multiple metrics (with validation)</li>
  *   <li>GET /api/metrics - Retrieve all metrics</li>
  *   <li>GET /api/metrics/service/{serviceName} - Get metrics by service</li>
  *   <li>GET /api/metrics/stats - Get ingestion statistics</li>
@@ -44,7 +52,11 @@ public class MetricsController {
     }
     
     /**
-     * Submit a single metric.
+     * Submit a single metric with automatic validation.
+     * 
+     * <p>The {@code @Valid} annotation triggers automatic validation of the
+     * {@link MetricsEventDto} using JSR-303 annotations. If validation fails,
+     * Spring automatically returns a 400 Bad Request with validation error details.</p>
      * 
      * <h3>Request Example:</h3>
      * <pre>
@@ -63,54 +75,52 @@ public class MetricsController {
      * }
      * </pre>
      * 
-     * <h3>Success Response:</h3>
+     * <h3>Success Response (201 Created):</h3>
      * <pre>
-     * 201 Created
      * {
      *   "message": "Metric ingested successfully",
      *   "metric": { ... }
      * }
      * </pre>
      * 
-     * <h3>Error Response:</h3>
+     * <h3>Validation Error Response (400 Bad Request):</h3>
      * <pre>
-     * 400 Bad Request
      * {
-     *   "error": "Invalid metric data",
-     *   "details": "latencyMs must be non-negative"
+     *   "error": "Validation failed",
+     *   "validationErrors": {
+     *     "serviceName": "serviceName must not be blank",
+     *     "latencyMs": "latencyMs must be positive"
+     *   }
      * }
      * </pre>
      * 
-     * @param request The metric request to ingest
-     * @return Response with ingested metric or error
+     * @param eventDto The metric event to ingest (automatically validated)
+     * @return Response with ingested metric
      */
     @PostMapping
-    public ResponseEntity<Map<String, Object>> ingestMetric(@RequestBody MetricRequest request) {
+    public ResponseEntity<Map<String, Object>> ingestMetric(@Valid @RequestBody MetricsEventDto eventDto) {
         logger.info("Received metric submission: service={}, endpoint={}", 
-                   request.getServiceName(), request.getEndpoint());
+                   eventDto.getServiceName(), eventDto.getEndpoint());
         
-        try {
-            Metric metric = metricsService.ingestMetric(request);
-            
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Metric ingested successfully");
-            response.put("metric", metric);
-            
-            return ResponseEntity.status(HttpStatus.CREATED).body(response);
-            
-        } catch (IllegalArgumentException e) {
-            logger.error("Invalid metric submission: {}", e.getMessage());
-            
-            Map<String, Object> error = new HashMap<>();
-            error.put("error", "Invalid metric data");
-            error.put("details", e.getMessage());
-            
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-        }
+        // Convert DTO to domain model and ingest
+        Metric metric = metricsService.ingestMetricEvent(eventDto);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Metric ingested successfully");
+        response.put("metric", metric);
+        
+        logger.info("Metric ingested - Service: {}, Endpoint: {}, Status: {}, Latency: {}ms",
+                   metric.getServiceName(), metric.getEndpoint(), 
+                   metric.getStatusCode(), metric.getLatencyMs());
+        
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
     
     /**
-     * Submit multiple metrics in a batch.
+     * Submit multiple metrics in a batch with automatic validation.
+     * 
+     * <p>Each metric in the batch is validated individually. If any metric fails
+     * validation, the entire batch is rejected.</p>
      * 
      * <h3>Request Example:</h3>
      * <pre>
@@ -135,34 +145,25 @@ public class MetricsController {
      * ]
      * </pre>
      * 
-     * @param requests List of metric requests
-     * @return Response with ingested metrics or error
+     * @param eventDtos List of metric events (each validated)
+     * @return Response with ingested metrics
      */
     @PostMapping("/batch")
     public ResponseEntity<Map<String, Object>> ingestMetricsBatch(
-            @RequestBody List<MetricRequest> requests) {
+            @Valid @RequestBody List<@Valid MetricsEventDto> eventDtos) {
         
-        logger.info("Received batch metric submission: {} metrics", requests.size());
+        logger.info("Received batch metric submission: {} metrics", eventDtos.size());
         
-        try {
-            List<Metric> metrics = metricsService.ingestMetricsBatch(requests);
-            
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Batch ingestion successful");
-            response.put("count", metrics.size());
-            response.put("metrics", metrics);
-            
-            return ResponseEntity.status(HttpStatus.CREATED).body(response);
-            
-        } catch (IllegalArgumentException e) {
-            logger.error("Invalid batch submission: {}", e.getMessage());
-            
-            Map<String, Object> error = new HashMap<>();
-            error.put("error", "Invalid metric data in batch");
-            error.put("details", e.getMessage());
-            
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-        }
+        List<Metric> metrics = metricsService.ingestMetricEventsBatch(eventDtos);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Batch ingestion successful");
+        response.put("count", metrics.size());
+        response.put("metrics", metrics);
+        
+        logger.info("Batch ingestion complete - {} metrics processed", metrics.size());
+        
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
     
     /**
@@ -251,5 +252,50 @@ public class MetricsController {
         stats.put("status", "operational");
         
         return ResponseEntity.ok(stats);
+    }
+    
+    /**
+     * Global exception handler for validation errors.
+     * 
+     * <p>This method handles {@link MethodArgumentNotValidException} thrown when
+     * validation fails for {@code @Valid} annotated parameters. It extracts all
+     * validation errors and returns them in a structured format.</p>
+     * 
+     * <h3>Error Response Format:</h3>
+     * <pre>
+     * 400 Bad Request
+     * {
+     *   "error": "Validation failed",
+     *   "validationErrors": {
+     *     "fieldName1": "error message 1",
+     *     "fieldName2": "error message 2"
+     *   }
+     * }
+     * </pre>
+     * 
+     * @param ex The validation exception
+     * @return Structured error response with validation details
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ResponseEntity<Map<String, Object>> handleValidationExceptions(
+            MethodArgumentNotValidException ex) {
+        
+        Map<String, String> errors = ex.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .collect(Collectors.toMap(
+                        FieldError::getField,
+                        error -> error.getDefaultMessage() != null ? error.getDefaultMessage() : "Invalid value",
+                        (existing, replacement) -> existing
+                ));
+        
+        logger.warn("Validation failed: {}", errors);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("error", "Validation failed");
+        response.put("validationErrors", errors);
+        
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 }
