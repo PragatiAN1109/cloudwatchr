@@ -1,0 +1,93 @@
+# Docker Compose configuration for CloudWatchr
+# This is a placeholder for future Docker containerization
+
+version: '3.8'
+
+services:
+  # Gateway Service
+  gateway:
+    build:
+      context: ../gateway-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - metrics
+      - analytics
+      - alerting
+      - ai-insights
+    networks:
+      - cloudwatchr-network
+
+  # Metrics Ingestion Service
+  metrics:
+    build:
+      context: ../metrics-ingestion-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - cloudwatchr-network
+
+  # Analytics Service
+  analytics:
+    build:
+      context: ../analytics-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - cloudwatchr-network
+
+  # Alerting Service
+  alerting:
+    build:
+      context: ../alerting-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - cloudwatchr-network
+
+  # AI Insights Service
+  ai-insights:
+    build:
+      context: ../ai-insights-service
+      dockerfile: Dockerfile
+    ports:
+      - "8084:8084"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - cloudwatchr-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_GATEWAY_URL=http://gateway:8080
+    depends_on:
+      - gateway
+    networks:
+      - cloudwatchr-network
+
+networks:
+  cloudwatchr-network:
+    driver: bridge
+
+# To use this configuration:
+# 1. Create Dockerfiles for each service
+# 2. Run: docker-compose up --build
+# 3. Access frontend at http://localhost:3000
